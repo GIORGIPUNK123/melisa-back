@@ -6,6 +6,12 @@ import { randomBytes } from 'crypto';
 import { argon2id, hash } from 'argon2';
 import { AESGCMEncrypt } from '../functions/cryptoFunctions';
 
+const frontendOrigin = (
+  process.env.FRONTEND_URL || 'https://melisa-phi.vercel.app'
+).replace(/\/+$/, '');
+
+const emailRedirectTo = `${frontendOrigin}/`;
+
 export const emailOtpController = async (req: any, res: Response) => {
   const { email } = req.body;
 
@@ -14,7 +20,7 @@ export const emailOtpController = async (req: any, res: Response) => {
       await supabase.auth.signInWithOtp({
         email,
         options: {
-          emailRedirectTo: 'http://localhost:5173/',
+          emailRedirectTo,
         },
       });
     if (authError) {
@@ -65,6 +71,9 @@ export const registerController = async (req: any, res: Response) => {
     const { data: userData, error: authError } = await supabase.auth.signUp({
       email: email,
       password: password,
+      options: {
+        emailRedirectTo,
+      },
     });
     if (authError) {
       throw new Error(authError.message);
