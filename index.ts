@@ -16,33 +16,8 @@ export const supabase = createClient(
 
 const app = express();
 
-// Allowed origins setup
-const allowedOrigins = [
-  'https://melisa-phi.vercel.app',
-  ...(process.env.FRONTEND_URL
-    ? [process.env.FRONTEND_URL.replace(/\/+$/, '')]
-    : []),
-];
-
-const corsOptions: cors.CorsOptions = {
-  origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, server-to-server) or listed origins
-    if (!origin || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    return callback(new Error('CORS Not Allowed'));
-  },
-  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  credentials: true,
-  optionsSuccessStatus: 204,
-};
-
 // Enable CORS middleware globally
-app.use(cors(corsOptions));
-
-// Explicitly handle preflight OPTIONS requests across all routes
-app.options('*', cors(corsOptions) as express.RequestHandler);
+app.use(cors());
 
 // Body Parsers (using built-in Express parsers instead of body-parser)
 app.use(express.urlencoded({ extended: true }));
