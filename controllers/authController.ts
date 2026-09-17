@@ -12,10 +12,15 @@ const frontendOrigin = (
 
 const emailRedirectTo = `${frontendOrigin}/`;
 
+console.log('[auth] FRONTEND_URL env:', process.env.FRONTEND_URL ?? '(unset)');
+console.log('[auth] frontendOrigin:', frontendOrigin);
+console.log('[auth] emailRedirectTo:', emailRedirectTo);
+
 export const emailOtpController = async (req: any, res: Response) => {
   const { email } = req.body;
 
   try {
+    console.log('[auth] signInWithOtp emailRedirectTo:', emailRedirectTo);
     const { data: userData, error: authError }: { data: any; error: any } =
       await supabase.auth.signInWithOtp({
         email,
@@ -67,6 +72,7 @@ export const registerController = async (req: any, res: Response) => {
       return res.status(400).send({ error: 'User already exists' });
     }
     console.log('No existing user found, proceeding with registration');
+    console.log('[auth] signUp emailRedirectTo:', emailRedirectTo);
     // Create auth user
     const { data: userData, error: authError } = await supabase.auth.signUp({
       email: email,
