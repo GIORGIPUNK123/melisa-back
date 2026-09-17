@@ -10,12 +10,17 @@ import { userInfoRoute } from './routes/userInfoRoute';
 import bodyParser from 'body-parser';
 import { conversationsRouter } from './routes/conversationsRouter';
 
-// include Windows CAs (Node 24)
-const { setDefaultCACertificates, getCACertificates } = tls as any;
-setDefaultCACertificates([
-  ...getCACertificates(),
-  ...getCACertificates('system'),
-]);
+try {
+  const { setDefaultCACertificates, getCACertificates } = tls as any;
+  if (typeof setDefaultCACertificates === 'function') {
+    setDefaultCACertificates([
+      ...getCACertificates(),
+      ...getCACertificates('system'),
+    ]);
+  }
+} catch {
+  // Node on Render already has public CAs
+}
 
 export const supabase = createClient(
   process.env.DB_URL!,
@@ -24,12 +29,15 @@ export const supabase = createClient(
 (async () => {
   const app = express();
 
-  app.use(
-    cors({
-      origin: true,
-      credentials: true,
-    }),
-  );
+  const corsOptions = {
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    optionsSuccessStatus: 204,
+  };
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
   app.use(bodyParser.urlencoded({ extended: true }));
   app.use(bodyParser.json());
 
@@ -58,9 +66,8 @@ export const supabase = createClient(
   app.get('*', (req, res) => {
     res.send('melisa');
   });
-  app.listen(process.env.PORT || 3000, () => {
-    console.log(
-      `> Ready on ${process.env.HOST || 'localhost'}:${process.env.PORT || 3000}`,
-    );
+  const port = Number(process.env.PORT) || 3000;
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`> Ready on ${port}`);
   });
 })();
