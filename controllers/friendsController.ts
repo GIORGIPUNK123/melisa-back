@@ -192,13 +192,47 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
       }
     }
 
-    // Update auth password
+    const {
+      encrypted_private_key,
+      iv,
+      salt,
+    }: {
+      encrypted_private_key?: string;
+      iv?: string;
+      salt?: string;
+    } = req.body;
+
+    // Password change must include re-wrapped key material, validated first
     if (password) {
       if (password.length < 6) {
         return res
           .status(400)
           .send({ error: 'Password must be at least 6 characters' });
       }
+      if (!encrypted_private_key || !iv || !salt) {
+        return res.status(400).send({
+          error:
+            'Changing password requires re-encrypted private key material (encrypted_private_key, iv, salt)',
+        });
+      }
+    }
+
+    if (encrypted_private_key || iv || salt) {
+      if (!encrypted_private_key || !iv || !salt) {
+        return res.status(400).send({
+          error: 'encrypted_private_key, iv, and salt must be sent together',
+        });
+      }
+      const { error: keyError } = await supabase
+        .from('users')
+        .update({ encrypted_private_key, iv, salt })
+        .eq('id', userId);
+      if (keyError) {
+        throw keyError;
+      }
+    }
+
+    if (password) {
       const { error: passwordError } = await supabase.auth.admin.updateUserById(
         userId,
         { password },
@@ -500,6 +534,52 @@ export const rejectFriendRequestController = async (
   }
 };
 
+export const removeFriendController = async (req: any, res: Response) => {
+  const { friendUserId } = req.params;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).send({ error: 'Unauthorized' });
+  }
+
+  if (!friendUserId) {
+    return res.status(400).send({ error: 'Friend user id is required' });
+  }
+
+  if (friendUserId === userId) {
+    return res.status(400).send({ error: 'Cannot remove yourself' });
+  }
+
+  try {
+    const { data: friendship, error: findError } = (await supabase
+      .from('friendships')
+      .select('id, user_id, receiver_id, status')
+      .eq('status', 'accepted')
+      .or(
+        `and(user_id.eq.${userId},receiver_id.eq.${friendUserId}),and(user_id.eq.${friendUserId},receiver_id.eq.${userId})`,
+      )
+      .maybeSingle()) as { data: FriendshipT | null; error: any };
+
+    if (findError) throw findError;
+
+    if (!friendship) {
+      return res.status(404).send({ error: 'Friendship not found' });
+    }
+
+    const { error: deleteError } = await supabase
+      .from('friendships')
+      .delete()
+      .eq('id', friendship.id);
+
+    if (deleteError) throw deleteError;
+
+    res.status(200).send({ message: 'Friend removed' });
+  } catch (err: any) {
+    console.error('Remove friend error:', err);
+    res.status(500).send({ error: err.message || 'Failed to remove friend' });
+  }
+};
+
 export const getUserProfileController = async (req: any, res: Response) => {
   const { username } = req.params;
 
@@ -530,7 +610,6 @@ export const getFriendsListController = async (req: any, res: Response) => {
   if (!userId) {
     return res.status(401).send({ error: 'Unauthorized' });
   }
-  // console.log('req.user:', req.user);
 
   try {
     // Get all accepted friendships where user is either sender or receiver

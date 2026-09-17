@@ -15,17 +15,7 @@ export const supabase = createClient(
 
 const app = express();
 
-const allowedOrigin = (
-  process.env.FRONTEND_URL || 'https://melisa-phi.vercel.app'
-).replace(/\/+$/, '');
-
-app.use(
-  cors({
-    origin: allowedOrigin,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  }),
-);
+app.use(cors());
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -50,5 +40,5 @@ app.get('*', (_req, res) => {
 
 const port = Number(process.env.PORT) || 3000;
 app.listen(port, '0.0.0.0', () => {
-  console.log(`> Ready on ${port} port`);
+  console.log(`> Ready on ${port}`);
 });

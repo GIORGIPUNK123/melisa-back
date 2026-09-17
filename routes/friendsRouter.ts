@@ -6,6 +6,7 @@ import {
   cancelFriendRequestController,
   acceptFriendRequestController,
   rejectFriendRequestController,
+  removeFriendController,
   getUserProfileController,
   getCurrentUserController,
   getFriendsListController,
@@ -19,6 +20,12 @@ export const friendsRouter = Router();
 friendsRouter.get('/me', authMiddleware, getCurrentUserController);
 
 friendsRouter.get('/list', authMiddleware, getFriendsListController);
+
+friendsRouter.delete(
+  '/with/:friendUserId',
+  authMiddleware,
+  removeFriendController,
+);
 
 friendsRouter.get(
   '/conversation/:friendUserId',
