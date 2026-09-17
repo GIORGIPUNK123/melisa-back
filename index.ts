@@ -29,15 +29,17 @@ export const supabase = createClient(
 (async () => {
   const app = express();
 
-  const corsOptions = {
-    origin: true,
-    credentials: true,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-    optionsSuccessStatus: 204,
-  };
-  app.use(cors(corsOptions));
-  app.options('*', cors(corsOptions));
+  const allowedOrigin = (
+    process.env.FRONTEND_URL || 'https://melisa-phi.vercel.app'
+  ).replace(/\/+$/, '');
+
+  app.use(
+    cors({
+      origin: allowedOrigin,
+      methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    }),
+  );
   app.use(bodyParser.urlencoded({ extended: true }));
   app.use(bodyParser.json());
 
@@ -45,17 +47,8 @@ export const supabase = createClient(
     res.send('melisa');
   });
 
-  app.get('/health', async (_req, res) => {
-    try {
-      const response = await fetch(`${process.env.DB_URL}/auth/v1/health`, {
-        headers: { apikey: process.env.DB_SECRET_KEY ?? '' },
-        signal: AbortSignal.timeout(3000),
-      });
-      if (!response.ok) throw new Error('Supabase health check failed');
-      res.json({ status: 'ok' });
-    } catch {
-      res.status(503).json({ status: 'error' });
-    }
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok' });
   });
 
   app.use('/auth', authRouter);
