@@ -1,6 +1,11 @@
 import { Response } from 'express';
 import { supabase } from '..';
 import { FriendshipT, FriendT, PublicProfileT } from '../types';
+import {
+  getBlockRelation,
+  getBlockedUserIds,
+  usersAreBlocked,
+} from '../functions/blocks';
 
 export const addFriendController = async (req: any, res: Response) => {
   const { username } = req.body;
@@ -27,6 +32,22 @@ export const addFriendController = async (req: any, res: Response) => {
       return res.status(400).send({ error: 'Cannot add yourself as a friend' });
     }
 
+    const blockRelation = await getBlockRelation(
+      supabase,
+      userId,
+      targetUser.id,
+    );
+    if (blockRelation.blockedByMe) {
+      return res.status(403).send({
+        error: 'Unblock this user to send a friend request',
+      });
+    }
+    if (blockRelation.blockedMe) {
+      return res.status(403).send({
+        error: 'Unable to send friend request',
+      });
+    }
+
     // Check if friendship already exists
     const { data: existingFriendship } = (await supabase
       .from('friendships')
@@ -43,6 +64,8 @@ export const addFriendController = async (req: any, res: Response) => {
           .send({ error: 'Friend request already pending' });
       } else if (existingFriendship.status === 'accepted') {
         return res.status(400).send({ error: 'Already friends' });
+      } else if (existingFriendship.status === 'blocked') {
+        return res.status(403).send({ error: 'Unable to send friend request' });
       }
     }
 
@@ -301,8 +324,17 @@ export const getPendingRequestsController = async (req: any, res: Response) => {
 
     if (receivedError) throw receivedError;
 
+    const blockedIds = await getBlockedUserIds(supabase, userId);
+
+    const visibleSent = (sentRequests || []).filter(
+      (request: any) => !blockedIds.has(request.receiver_id),
+    );
+    const visibleReceived = (receivedRequests || []).filter(
+      (request: any) => !blockedIds.has(request.user_id),
+    );
+
     // Format the response without IDs
-    const sent = (sentRequests || []).map((req: any) => ({
+    const sent = visibleSent.map((req: any) => ({
       friendshipId: req.id,
       username: req.receiver?.username,
       nickname: req.receiver?.nickname,
@@ -311,7 +343,7 @@ export const getPendingRequestsController = async (req: any, res: Response) => {
       createdAt: req.created_at,
     }));
 
-    const received = (receivedRequests || []).map((req: any) => ({
+    const received = visibleReceived.map((req: any) => ({
       friendshipId: req.id,
       username: req.sender?.username,
       nickname: req.sender?.nickname,
@@ -407,6 +439,11 @@ export const acceptFriendRequestController = async (
 
     if (friendship.status !== 'pending') {
       return res.status(400).send({ error: 'Request is no longer pending' });
+    }
+
+    if (await usersAreBlocked(supabase, userId, friendship.user_id)) {
+      await supabase.from('friendships').delete().eq('id', friendshipId);
+      return res.status(403).send({ error: 'Unable to accept this request' });
     }
 
     // Update to accepted
@@ -563,7 +600,7 @@ export const removeFriendController = async (req: any, res: Response) => {
     if (findError) throw findError;
 
     if (!friendship) {
-      return res.status(404).send({ error: 'Friendship not found' });
+      return res.status(200).send({ message: 'Friend removed' });
     }
 
     const { error: deleteError } = await supabase
@@ -582,6 +619,7 @@ export const removeFriendController = async (req: any, res: Response) => {
 
 export const getUserProfileController = async (req: any, res: Response) => {
   const { username } = req.params;
+  const viewerId = req.user?.id;
 
   try {
     // Get public profile (no ID exposed)
@@ -595,6 +633,13 @@ export const getUserProfileController = async (req: any, res: Response) => {
 
     if (error || !user) {
       return res.status(404).send({ error: 'User not found' });
+    }
+
+    if (viewerId && viewerId !== user.id) {
+      const relation = await getBlockRelation(supabase, viewerId, user.id);
+      if (relation.blockedMe) {
+        return res.status(404).send({ error: 'User not found' });
+      }
     }
 
     res.status(200).send({ user });
@@ -623,8 +668,18 @@ export const getFriendsListController = async (req: any, res: Response) => {
     };
     if (error) throw error;
 
+    const blockedIds = await getBlockedUserIds(supabase, userId);
+
+    const visibleFriendships = (friendships || []).filter((friendship) => {
+      const otherId =
+        friendship.user_id === userId
+          ? friendship.receiver_id
+          : friendship.user_id;
+      return !blockedIds.has(otherId);
+    });
+
     const friends: FriendT[] = await Promise.all(
-      (friendships || []).map(async (f) => {
+      visibleFriendships.map(async (f) => {
         const isUserSender = f.user_id === userId;
         const { data: friendInfo } = (await supabase
           .from('public_profiles')
@@ -721,6 +776,10 @@ export const getOrCreateConversationController = async (
       return res
         .status(403)
         .send({ error: 'You are not friends with this user' });
+    }
+
+    if (await usersAreBlocked(supabase, userId, friendUserId)) {
+      return res.status(403).send({ error: 'Unable to message this user' });
     }
 
     // Try to find existing direct conversation between these two users

@@ -13,6 +13,10 @@ import {
   getOrCreateConversationController,
   getConversationMembersController,
 } from '../controllers/friendsController';
+import {
+  blockUserController,
+  unblockUserController,
+} from '../controllers/blocksController';
 import { authMiddleware } from '../middlewares/authMiddleware';
 
 export const friendsRouter = Router();
@@ -41,6 +45,14 @@ friendsRouter.get(
 
 friendsRouter.post('/add', authMiddleware, addFriendController);
 
+friendsRouter.post('/block', authMiddleware, blockUserController);
+
+friendsRouter.delete(
+  '/block/:userId',
+  authMiddleware,
+  unblockUserController,
+);
+
 friendsRouter.get('/pending', authMiddleware, getPendingRequestsController);
 
 friendsRouter.delete(
@@ -61,6 +73,10 @@ friendsRouter.delete(
   rejectFriendRequestController,
 );
 
-friendsRouter.get('/profile/:username', getUserProfileController);
+friendsRouter.get(
+  '/profile/:username',
+  authMiddleware,
+  getUserProfileController,
+);
 
 friendsRouter.put('/settings', authMiddleware, updateUserSettingsController);
