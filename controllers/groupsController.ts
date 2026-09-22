@@ -244,6 +244,7 @@ type GroupMember = {
   role: GroupRoleName;
   canKick: boolean;
   canChangePhoto: boolean;
+  canChangeName: boolean;
   canClearMessages: boolean;
 };
 
@@ -282,6 +283,7 @@ const memberFromRow = (
     role?: string | null;
     can_kick?: boolean | null;
     can_change_photo?: boolean | null;
+    can_change_name?: boolean | null;
     can_clear_messages?: boolean | null;
   },
   creatorId: string,
@@ -298,6 +300,7 @@ const memberFromRow = (
     role,
     canKick: role === 'admin' || row.can_kick === true,
     canChangePhoto: role === 'admin' || row.can_change_photo === true,
+    canChangeName: role === 'admin' || row.can_change_name === true,
     canClearMessages: role === 'admin' || row.can_clear_messages === true,
   };
 };
@@ -328,16 +331,27 @@ const loadGroup = async (
 
   const group = conversation;
 
-  const memberQuery = await supabase
+  const membersWithName = await supabase
     .from('conversation_members')
-    .select('user_id, role, can_kick, can_change_photo, can_clear_messages')
+    .select(
+      'user_id, role, can_kick, can_change_photo, can_change_name, can_clear_messages',
+    )
     .eq('conversation_id', conversationId);
+
+  const memberQuery =
+    membersWithName.error && columnMissing(membersWithName.error, 'can_change_name')
+      ? await supabase
+          .from('conversation_members')
+          .select('user_id, role, can_kick, can_change_photo, can_clear_messages')
+          .eq('conversation_id', conversationId)
+      : membersWithName;
 
   let memberRows: {
     user_id: string;
     role?: string | null;
     can_kick?: boolean | null;
     can_change_photo?: boolean | null;
+    can_change_name?: boolean | null;
     can_clear_messages?: boolean | null;
   }[] = memberQuery.data || [];
   let memberError = memberQuery.error;
@@ -693,16 +707,20 @@ export const setGroupAdminController = async (
     const target = group.members.find((member) => member.userId === targetId);
     if (!target) return res.status(404).send({ error: 'Member not found' });
 
+    const wantsNameChange =
+      role === 'moderator' && req.body?.canChangeName === true;
     const permissions =
       role === 'moderator'
         ? {
             can_kick: req.body?.canKick === true,
             can_change_photo: req.body?.canChangePhoto === true,
+            can_change_name: wantsNameChange,
             can_clear_messages: req.body?.canClearMessages === true,
           }
         : {
             can_kick: false,
             can_change_photo: false,
+            can_change_name: false,
             can_clear_messages: false,
           };
 
@@ -711,6 +729,21 @@ export const setGroupAdminController = async (
       .update({ role, ...permissions })
       .eq('conversation_id', group.id)
       .eq('user_id', targetId);
+
+    if (error && columnMissing(error, 'can_change_name')) {
+      if (wantsNameChange) {
+        return res.status(503).send({
+          error:
+            'Renaming is not ready yet. Add can_change_name in Supabase, then try again.',
+        });
+      }
+      const { can_change_name: _ignored, ...withoutName } = permissions;
+      ({ error } = await supabase
+        .from('conversation_members')
+        .update({ role, ...withoutName })
+        .eq('conversation_id', group.id)
+        .eq('user_id', targetId));
+    }
 
     if (error && columnMissing(error, 'can_kick') && role !== 'moderator') {
       ({ error } = await supabase
@@ -863,6 +896,42 @@ export const updateGroupPhotoController = async (
   }
 };
 
+export const updateGroupNameController = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  const userId = req.user?.id;
+  const conversationId = String(req.params.conversationId || '');
+  if (!userId) return res.status(401).send({ error: 'Unauthorized' });
+
+  const name = cleanName(req.body?.name);
+  if (name.length < 1) {
+    return res.status(400).send({ error: 'Group name is required' });
+  }
+
+  try {
+    const group = await loadGroup(conversationId);
+    if (!group) return res.status(404).send({ error: 'Group not found' });
+    const actor = group.members.find((member) => member.userId === userId);
+    if (!actor?.canChangeName) {
+      return res.status(403).send({ error: 'You cannot rename this group' });
+    }
+
+    const { error } = await supabase
+      .from('conversations')
+      .update({ name })
+      .eq('id', group.id)
+      .eq('type', 'group');
+
+    if (error) throw error;
+
+    res.status(200).send({ name });
+  } catch (err: any) {
+    console.error('Update group name error:', err);
+    res.status(500).send({ error: err.message || 'Failed to rename the group' });
+  }
+};
+
 export const leaveGroupController = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -903,16 +972,31 @@ export const leaveGroupController = async (
         });
       }
 
-      const { error: promoteError } = await supabase
+      let { error: promoteError } = await supabase
         .from('conversation_members')
         .update({
           role: 'admin',
           can_kick: false,
           can_change_photo: false,
+          can_change_name: false,
           can_clear_messages: false,
         })
         .eq('conversation_id', group.id)
         .eq('user_id', successorId);
+
+      if (promoteError && columnMissing(promoteError, 'can_change_name')) {
+        const retry = await supabase
+          .from('conversation_members')
+          .update({
+            role: 'admin',
+            can_kick: false,
+            can_change_photo: false,
+            can_clear_messages: false,
+          })
+          .eq('conversation_id', group.id)
+          .eq('user_id', successorId);
+        promoteError = retry.error;
+      }
 
       if (promoteError && columnMissing(promoteError, 'can_kick')) {
         const retry = await supabase

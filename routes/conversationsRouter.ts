@@ -8,6 +8,7 @@ import {
   kickGroupMemberController,
   leaveGroupController,
   setGroupAdminController,
+  updateGroupNameController,
   updateGroupPhotoController,
 } from '../controllers/groupsController';
 import { authMiddleware } from '../middlewares/authMiddleware';
@@ -34,6 +35,11 @@ conversationsRouter.put(
   '/group/:conversationId/photo',
   authMiddleware,
   updateGroupPhotoController,
+);
+conversationsRouter.put(
+  '/group/:conversationId/name',
+  authMiddleware,
+  updateGroupNameController,
 );
 conversationsRouter.post(
   '/group/:conversationId/leave',

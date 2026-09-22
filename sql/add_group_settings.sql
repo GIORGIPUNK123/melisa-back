@@ -21,6 +21,9 @@ alter table public.conversation_members
 alter table public.conversation_members
   add column if not exists can_clear_messages boolean not null default false;
 
+alter table public.conversation_members
+  add column if not exists can_change_name boolean not null default false;
+
 comment on column public.conversations.avatar_url is
   'Group photo URL. Direct chats leave this empty.';
 
@@ -35,6 +38,9 @@ comment on column public.conversation_members.can_change_photo is
 
 comment on column public.conversation_members.can_clear_messages is
   'Moderator permission: clear every message in the group.';
+
+comment on column public.conversation_members.can_change_name is
+  'Moderator permission: rename the group.';
 
 -- Group membership can only be removed by the server. That is what enforces
 -- the leave picker: an admin cannot drop their own row from the client
