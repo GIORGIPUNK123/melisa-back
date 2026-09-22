@@ -235,17 +235,23 @@ export const createGroupController = async (
 };
 
 const ROLE_SETUP_ERROR =
-  'Group roles are not ready yet. Add the role column in Supabase, then try again.';
+  'Group roles are not ready yet. Run the group settings SQL in Supabase, then try again.';
+
+type GroupRoleName = 'admin' | 'moderator' | 'member';
 
 type GroupMember = {
   userId: string;
-  role: 'admin' | 'member';
+  role: GroupRoleName;
+  canKick: boolean;
+  canChangePhoto: boolean;
+  canClearMessages: boolean;
 };
 
 type GroupRecord = {
   id: string | number;
   name: string;
   createdBy: string;
+  avatarUrl: string | null;
   members: GroupMember[];
 };
 
@@ -270,22 +276,80 @@ const parseEnvelopes = (value: unknown) => {
   return envelopes;
 };
 
+const memberFromRow = (
+  row: {
+    user_id: string;
+    role?: string | null;
+    can_kick?: boolean | null;
+    can_change_photo?: boolean | null;
+    can_clear_messages?: boolean | null;
+  },
+  creatorId: string,
+): GroupMember => {
+  const role: GroupRoleName =
+    row.user_id === creatorId || row.role === 'admin'
+      ? 'admin'
+      : row.role === 'moderator'
+        ? 'moderator'
+        : 'member';
+
+  return {
+    userId: row.user_id,
+    role,
+    canKick: role === 'admin' || row.can_kick === true,
+    canChangePhoto: role === 'admin' || row.can_change_photo === true,
+    canClearMessages: role === 'admin' || row.can_clear_messages === true,
+  };
+};
+
 const loadGroup = async (
   conversationId: string,
 ): Promise<GroupRecord | null> => {
-  const { data: conversation, error } = await supabase
+  let { data: conversation, error } = await supabase
     .from('conversations')
-    .select('id, type, name, created_by')
+    .select('id, type, name, created_by, avatar_url')
     .eq('id', conversationId)
     .maybeSingle();
+
+  if (error && columnMissing(error, 'avatar_url')) {
+    const fallback = await supabase
+      .from('conversations')
+      .select('id, type, name, created_by')
+      .eq('id', conversationId)
+      .maybeSingle();
+    conversation = fallback.data
+      ? { ...fallback.data, avatar_url: null }
+      : null;
+    error = fallback.error;
+  }
 
   if (error) throw error;
   if (!conversation || conversation.type !== 'group') return null;
 
-  let { data: rows, error: memberError } = await supabase
+  const group = conversation;
+
+  const memberQuery = await supabase
     .from('conversation_members')
-    .select('user_id, role')
+    .select('user_id, role, can_kick, can_change_photo, can_clear_messages')
     .eq('conversation_id', conversationId);
+
+  let memberRows: {
+    user_id: string;
+    role?: string | null;
+    can_kick?: boolean | null;
+    can_change_photo?: boolean | null;
+    can_clear_messages?: boolean | null;
+  }[] = memberQuery.data || [];
+  let memberError = memberQuery.error;
+
+  if (memberError && columnMissing(memberError, 'can_kick')) {
+    const fallback = await supabase
+      .from('conversation_members')
+      .select('user_id, role')
+      .eq('conversation_id', conversationId);
+    memberRows = fallback.data || [];
+    memberError = fallback.error;
+  }
 
   if (memberError && columnMissing(memberError, 'role')) {
     const fallback = await supabase
@@ -293,9 +357,9 @@ const loadGroup = async (
       .select('user_id')
       .eq('conversation_id', conversationId);
     if (fallback.error) throw fallback.error;
-    rows = (fallback.data || []).map((row) => ({
+    memberRows = (fallback.data || []).map((row) => ({
       user_id: row.user_id,
-      role: row.user_id === conversation.created_by ? 'admin' : 'member',
+      role: row.user_id === group.created_by ? 'admin' : 'member',
     }));
     memberError = null;
   }
@@ -303,17 +367,54 @@ const loadGroup = async (
   if (memberError) throw memberError;
 
   return {
-    id: conversation.id,
-    name: conversation.name?.trim() || 'Group',
-    createdBy: conversation.created_by,
-    members: (rows || []).map((row) => ({
-      userId: row.user_id,
-      role:
-        row.role === 'admin' || row.user_id === conversation.created_by
-          ? 'admin'
-          : 'member',
-    })),
+    id: group.id,
+    name: group.name?.trim() || 'Group',
+    createdBy: group.created_by,
+    avatarUrl: group.avatar_url || null,
+    members: memberRows.map((row) => memberFromRow(row, group.created_by)),
   };
+};
+
+const eraseGroup = async (group: GroupRecord) => {
+  await supabase.from('message_reactions').delete().eq('conversation_id', group.id);
+  await supabase.from('messages').delete().eq('conversation_id', group.id);
+  await supabase
+    .from('conversation_key_envelopes')
+    .delete()
+    .eq('conversation_id', group.id);
+
+  const otherMemberIds = group.members
+    .map((member) => member.userId)
+    .filter((id) => id !== group.createdBy);
+
+  if (otherMemberIds.length > 0) {
+    const { error: othersError } = await supabase
+      .from('conversation_members')
+      .delete()
+      .eq('conversation_id', group.id)
+      .in('user_id', otherMemberIds);
+    if (othersError) throw othersError;
+  }
+
+  const { error: ownerError } = await supabase
+    .from('conversation_members')
+    .delete()
+    .eq('conversation_id', group.id)
+    .eq('user_id', group.createdBy);
+  if (ownerError) throw ownerError;
+
+  const { error } = await supabase.from('conversations').delete().eq('id', group.id);
+  if (error) throw error;
+};
+
+const cleanAvatarUrl = (value: unknown) => {
+  if (value == null || String(value).trim() === '') return { url: null as string | null };
+  const url = String(value).trim();
+  if (url.length > 500) return { error: 'Link is too long' };
+  if (!/^https?:\/\/\S+$/i.test(url)) {
+    return { error: 'Use an http or https image link' };
+  }
+  return { url };
 };
 
 const friendIdsOf = async (userId: string) => {
@@ -517,8 +618,10 @@ export const kickGroupMemberController = async (
   try {
     const group = await loadGroup(conversationId);
     if (!group) return res.status(404).send({ error: 'Group not found' });
-    if (!isAdminMember(group, userId)) {
-      return res.status(403).send({ error: 'Only an admin can remove people' });
+
+    const actor = group.members.find((member) => member.userId === userId);
+    if (!actor?.canKick) {
+      return res.status(403).send({ error: 'You cannot remove people from this group' });
     }
     if (targetId === userId) {
       return res.status(400).send({ error: 'Leave the group instead of removing yourself' });
@@ -530,11 +633,9 @@ export const kickGroupMemberController = async (
     const target = group.members.find((member) => member.userId === targetId);
     if (!target) return res.status(404).send({ error: 'Member not found' });
 
-    const actorIsCreator = group.createdBy === userId;
-    if (target.role === 'admin' && !actorIsCreator) {
-      return res
-        .status(403)
-        .send({ error: 'Only the group creator can remove an admin' });
+    const actorIsAdmin = isAdminMember(group, userId);
+    if (target.role !== 'member' && !actorIsAdmin) {
+      return res.status(403).send({ error: 'Moderators can only remove members' });
     }
 
     const { error } = await supabase
@@ -565,7 +666,15 @@ export const setGroupAdminController = async (
   const userId = req.user?.id;
   const conversationId = String(req.params.conversationId || '');
   const targetId = String(req.params.userId || '');
-  const makeAdmin = req.body?.admin === true;
+  const requestedRole = req.body?.role;
+  const role: GroupRoleName =
+    requestedRole === 'admin' ||
+    requestedRole === 'moderator' ||
+    requestedRole === 'member'
+      ? requestedRole
+      : req.body?.admin === true
+        ? 'admin'
+        : 'member';
   if (!userId) return res.status(401).send({ error: 'Unauthorized' });
   if (!isUuid(targetId)) {
     return res.status(400).send({ error: 'Member not found' });
@@ -574,10 +683,8 @@ export const setGroupAdminController = async (
   try {
     const group = await loadGroup(conversationId);
     if (!group) return res.status(404).send({ error: 'Group not found' });
-    if (group.createdBy !== userId) {
-      return res
-        .status(403)
-        .send({ error: 'Only the group creator can change admins' });
+    if (!isAdminMember(group, userId)) {
+      return res.status(403).send({ error: 'Only an admin can change roles' });
     }
     if (targetId === group.createdBy) {
       return res.status(400).send({ error: 'The group creator stays an admin' });
@@ -586,18 +693,44 @@ export const setGroupAdminController = async (
     const target = group.members.find((member) => member.userId === targetId);
     if (!target) return res.status(404).send({ error: 'Member not found' });
 
-    const { error } = await supabase
+    const permissions =
+      role === 'moderator'
+        ? {
+            can_kick: req.body?.canKick === true,
+            can_change_photo: req.body?.canChangePhoto === true,
+            can_clear_messages: req.body?.canClearMessages === true,
+          }
+        : {
+            can_kick: false,
+            can_change_photo: false,
+            can_clear_messages: false,
+          };
+
+    let { error } = await supabase
       .from('conversation_members')
-      .update({ role: makeAdmin ? 'admin' : 'member' })
+      .update({ role, ...permissions })
       .eq('conversation_id', group.id)
       .eq('user_id', targetId);
 
-    if (error && columnMissing(error, 'role')) {
+    if (error && columnMissing(error, 'can_kick') && role !== 'moderator') {
+      ({ error } = await supabase
+        .from('conversation_members')
+        .update({ role })
+        .eq('conversation_id', group.id)
+        .eq('user_id', targetId));
+    }
+
+    if (
+      error &&
+      (columnMissing(error, 'role') ||
+        columnMissing(error, 'can_kick') ||
+        /role_check|check constraint/i.test(error.message || ''))
+    ) {
       return res.status(503).send({ error: ROLE_SETUP_ERROR });
     }
     if (error) throw error;
 
-    res.status(200).send({ userId: targetId, admin: makeAdmin });
+    res.status(200).send({ userId: targetId, role, ...permissions });
   } catch (err: any) {
     console.error('Set group admin error:', err);
     res.status(500).send({ error: err.message || 'Failed to update admin' });
@@ -615,8 +748,9 @@ export const clearGroupMessagesController = async (
   try {
     const group = await loadGroup(conversationId);
     if (!group) return res.status(404).send({ error: 'Group not found' });
-    if (!isAdminMember(group, userId)) {
-      return res.status(403).send({ error: 'Only an admin can clear messages' });
+    const actor = group.members.find((member) => member.userId === userId);
+    if (!actor?.canClearMessages) {
+      return res.status(403).send({ error: 'You cannot clear messages in this group' });
     }
 
     const clearedAt = new Date().toISOString();
@@ -671,39 +805,7 @@ export const deleteGroupController = async (
 
     const memberIds = group.members.map((member) => member.userId);
     const groupName = group.name;
-
-    await supabase
-      .from('message_reactions')
-      .delete()
-      .eq('conversation_id', group.id);
-    await supabase.from('messages').delete().eq('conversation_id', group.id);
-    await supabase
-      .from('conversation_key_envelopes')
-      .delete()
-      .eq('conversation_id', group.id);
-
-    const otherMemberIds = memberIds.filter((id) => id !== group.createdBy);
-    if (otherMemberIds.length > 0) {
-      const { error: othersError } = await supabase
-        .from('conversation_members')
-        .delete()
-        .eq('conversation_id', group.id)
-        .in('user_id', otherMemberIds);
-      if (othersError) throw othersError;
-    }
-
-    const { error: ownerError } = await supabase
-      .from('conversation_members')
-      .delete()
-      .eq('conversation_id', group.id)
-      .eq('user_id', group.createdBy);
-    if (ownerError) throw ownerError;
-
-    const { error } = await supabase
-      .from('conversations')
-      .delete()
-      .eq('id', group.id);
-    if (error) throw error;
+    await eraseGroup(group);
 
     await notifyUsers(
       memberIds.filter((id) => id !== userId),
@@ -718,5 +820,130 @@ export const deleteGroupController = async (
   } catch (err: any) {
     console.error('Delete group error:', err);
     res.status(500).send({ error: err.message || 'Failed to delete group' });
+  }
+};
+
+export const updateGroupPhotoController = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  const userId = req.user?.id;
+  const conversationId = String(req.params.conversationId || '');
+  if (!userId) return res.status(401).send({ error: 'Unauthorized' });
+
+  const cleaned = cleanAvatarUrl(req.body?.avatarUrl);
+  if ('error' in cleaned && cleaned.error) {
+    return res.status(400).send({ error: cleaned.error });
+  }
+
+  try {
+    const group = await loadGroup(conversationId);
+    if (!group) return res.status(404).send({ error: 'Group not found' });
+    const actor = group.members.find((member) => member.userId === userId);
+    if (!actor?.canChangePhoto) {
+      return res.status(403).send({ error: 'You cannot change the group photo' });
+    }
+
+    const { error } = await supabase
+      .from('conversations')
+      .update({ avatar_url: cleaned.url })
+      .eq('id', group.id);
+
+    if (error && columnMissing(error, 'avatar_url')) {
+      return res.status(503).send({
+        error: 'Group photos are not ready yet. Add avatar_url in Supabase, then try again.',
+      });
+    }
+    if (error) throw error;
+
+    res.status(200).send({ avatarUrl: cleaned.url });
+  } catch (err: any) {
+    console.error('Update group photo error:', err);
+    res.status(500).send({ error: err.message || 'Failed to update the group photo' });
+  }
+};
+
+export const leaveGroupController = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  const userId = req.user?.id;
+  const conversationId = String(req.params.conversationId || '');
+  if (!userId) return res.status(401).send({ error: 'Unauthorized' });
+
+  try {
+    const group = await loadGroup(conversationId);
+    if (!group) return res.status(404).send({ error: 'Group not found' });
+
+    const actor = group.members.find((member) => member.userId === userId);
+    if (!actor) {
+      return res.status(403).send({ error: 'You are not in this group' });
+    }
+
+    const others = group.members.filter((member) => member.userId !== userId);
+    if (others.length === 0) {
+      await eraseGroup(group);
+      return res.status(200).send({ deleted: true });
+    }
+
+    const mustAppoint = isAdminMember(group, userId);
+
+    let successorId = '';
+    if (mustAppoint) {
+      if (req.body?.random === true) {
+        successorId = others[Math.floor(Math.random() * others.length)].userId;
+      } else if (isUuid(req.body?.successorId)) {
+        successorId = String(req.body.successorId);
+      }
+
+      if (!others.some((member) => member.userId === successorId)) {
+        return res.status(409).send({
+          error: 'Choose the next admin before leaving',
+          needsSuccessor: true,
+        });
+      }
+
+      const { error: promoteError } = await supabase
+        .from('conversation_members')
+        .update({
+          role: 'admin',
+          can_kick: false,
+          can_change_photo: false,
+          can_clear_messages: false,
+        })
+        .eq('conversation_id', group.id)
+        .eq('user_id', successorId);
+
+      if (promoteError && columnMissing(promoteError, 'can_kick')) {
+        const retry = await supabase
+          .from('conversation_members')
+          .update({ role: 'admin' })
+          .eq('conversation_id', group.id)
+          .eq('user_id', successorId);
+        if (retry.error) throw retry.error;
+      } else if (promoteError) {
+        throw promoteError;
+      }
+
+      if (group.createdBy === userId) {
+        const { error: ownerError } = await supabase
+          .from('conversations')
+          .update({ created_by: successorId })
+          .eq('id', group.id);
+        if (ownerError) throw ownerError;
+      }
+    }
+
+    const { error } = await supabase
+      .from('conversation_members')
+      .delete()
+      .eq('conversation_id', group.id)
+      .eq('user_id', userId);
+    if (error) throw error;
+
+    res.status(200).send({ left: true, successorId: successorId || null });
+  } catch (err: any) {
+    console.error('Leave group error:', err);
+    res.status(500).send({ error: err.message || 'Failed to leave the group' });
   }
 };
