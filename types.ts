@@ -44,6 +44,7 @@ export interface ConversationMemberT {
   user_id: string;
   joined_at: string;
   last_read_at: string;
+  muted?: boolean;
 }
 export interface registerRequestT extends Request {
   body: {
