@@ -10,7 +10,8 @@ const frontendOrigin = (
   process.env.FRONTEND_URL || 'https://melisa-phi.vercel.app'
 ).replace(/\/+$/, '');
 
-const emailRedirectTo = `${frontendOrigin}/`;
+// const emailRedirectTo = `${frontendOrigin}/`;
+const emailRedirectTo = 'https://melisa-phi.vercel.app/';
 
 console.log('[auth] FRONTEND_URL env:', process.env.FRONTEND_URL ?? '(unset)');
 console.log('[auth] frontendOrigin:', frontendOrigin);
