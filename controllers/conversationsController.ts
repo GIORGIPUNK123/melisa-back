@@ -29,7 +29,6 @@ export const getConversationMembersController = async (
     };
     if (error) throw error;
 
-    console.log('members:', members);
     const publicProfiles: PublicProfileT[] = await Promise.all(
       members.map(async (member) => {
         const { data: publicProfile } = (await supabase

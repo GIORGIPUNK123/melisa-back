@@ -17,7 +17,6 @@ export const validation =
       await schema.validate({
         body: req.body,
       });
-      console.log('Validation passed');
       next();
     } catch (error: any) {
       res.status(400).send({ error: error.message });

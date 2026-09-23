@@ -10,7 +10,7 @@ export const userExists = async (supabase: any, email: string) => {
 
     return !!data.length;
   } catch (err) {
-    console.log('error: ', err);
+    console.error(err);
     return false;
   }
 };
@@ -26,7 +26,7 @@ export const userNameExists = async (supabase: any, username: string) => {
 
     return !!data.length;
   } catch (err) {
-    console.log('error: ', err);
+    console.error(err);
     return false;
   }
 };

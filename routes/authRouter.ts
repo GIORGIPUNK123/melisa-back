@@ -1,6 +1,4 @@
 import { Router } from 'express';
-import { supabase } from '..';
-import { userExists } from '../functions/getUserInfo';
 import {
   emailOtpController,
   registerController,

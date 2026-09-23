@@ -10,29 +10,21 @@ const frontendOrigin = (
   process.env.FRONTEND_URL || 'https://melisa-phi.vercel.app'
 ).replace(/\/+$/, '');
 
-// const emailRedirectTo = `${frontendOrigin}/`;
-const emailRedirectTo = 'https://melisa-phi.vercel.app/';
-
-console.log('[auth] FRONTEND_URL env:', process.env.FRONTEND_URL ?? '(unset)');
-console.log('[auth] frontendOrigin:', frontendOrigin);
-console.log('[auth] emailRedirectTo:', emailRedirectTo);
+const emailRedirectTo = `${frontendOrigin}/`;
 
 export const emailOtpController = async (req: any, res: Response) => {
   const { email } = req.body;
 
   try {
-    console.log('[auth] signInWithOtp emailRedirectTo:', emailRedirectTo);
-    const { data: userData, error: authError }: { data: any; error: any } =
-      await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo,
-        },
-      });
+    const { error: authError } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo,
+      },
+    });
     if (authError) {
       throw authError;
     }
-    userData.user;
     res.send(`Link was sent to ${email}. Please authenticate.`);
   } catch (error) {
     console.error('Error in OTP:', error);
@@ -43,25 +35,12 @@ export const emailOtpController = async (req: any, res: Response) => {
 };
 
 export const registerController = async (req: any, res: Response) => {
-  const {
-    email,
-    password,
-    username,
-    nickname,
-    public_key,
-    encrypted_private_key,
-    iv,
-    salt,
-  } = <
+  const { email, password, username, nickname } = <
     {
       email: string;
       password: string;
       username: string;
       nickname: string;
-      public_key: string;
-      encrypted_private_key: string;
-      iv: string;
-      salt: string;
     }
   >req.body;
   try {
@@ -72,8 +51,6 @@ export const registerController = async (req: any, res: Response) => {
     if (existingUser) {
       return res.status(400).send({ error: 'User already exists' });
     }
-    console.log('No existing user found, proceeding with registration');
-    console.log('[auth] signUp emailRedirectTo:', emailRedirectTo);
     // Create auth user
     const { data: userData, error: authError } = await supabase.auth.signUp({
       email: email,

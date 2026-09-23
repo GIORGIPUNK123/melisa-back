@@ -6,6 +6,7 @@ import {
   getBlockedUserIds,
   usersAreBlocked,
 } from '../functions/blocks';
+import { passwordError } from '../functions/passwordPolicy';
 
 export const addFriendController = async (req: any, res: Response) => {
   const { username } = req.body;
@@ -227,10 +228,9 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
 
     // Password change must include re-wrapped key material, validated first
     if (password) {
-      if (password.length < 6) {
-        return res
-          .status(400)
-          .send({ error: 'Password must be at least 6 characters' });
+      const passwordProblem = passwordError(password);
+      if (passwordProblem) {
+        return res.status(400).send({ error: passwordProblem });
       }
       if (!encrypted_private_key || !iv || !salt) {
         return res.status(400).send({
