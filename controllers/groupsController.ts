@@ -2,6 +2,11 @@ import { Response } from 'express';
 import { supabase } from '..';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { getBlockedUserIds, isUuid } from '../functions/blocks';
+import {
+  filePathFromMessage,
+  removeConversationMedia,
+  removeStoredPaths,
+} from '../functions/chatMedia';
 
 const MAX_GROUP_MEMBERS = 50;
 const KEY_TEXT = /^[A-Za-z0-9+/]+=*$/;
@@ -419,6 +424,8 @@ const eraseGroup = async (group: GroupRecord) => {
 
   const { error } = await supabase.from('conversations').delete().eq('id', group.id);
   if (error) throw error;
+
+  await removeConversationMedia(group.id);
 };
 
 const cleanAvatarUrl = (value: unknown) => {
@@ -807,12 +814,27 @@ export const clearGroupMessagesController = async (
       .lte('created_at', clearedAt);
     if (reactionError) throw reactionError;
 
+    const { data: doomed, error: doomedError } = await supabase
+      .from('messages')
+      .select('content')
+      .eq('conversation_id', group.id)
+      .lte('created_at', clearedAt);
+    if (doomedError) throw doomedError;
+
+    const mediaPaths = (doomed || [])
+      .map((row) => filePathFromMessage(row.content || ''))
+      .filter((path): path is string =>
+        Boolean(path?.startsWith(`${group.id}/`)),
+      );
+
     const { error: messageError } = await supabase
       .from('messages')
       .delete()
       .eq('conversation_id', group.id)
       .lte('created_at', clearedAt);
     if (messageError) throw messageError;
+
+    await removeStoredPaths(mediaPaths);
 
     res.status(200).send({ clearedAt });
   } catch (err: any) {

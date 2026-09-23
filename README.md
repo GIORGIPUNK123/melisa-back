@@ -38,7 +38,7 @@ CORS is open (`cors()` with no origin lock). The website does not call this host
 
 ## What this server is for
 
-The browser talks to Supabase directly for login, reading and sending messages, reactions, and presence.
+The browser talks to Supabase directly for login, reading and sending messages, reactions, presence, and uploading encrypted files to `chat-media`.
 
 This server is for work that needs the service role:
 
@@ -47,6 +47,7 @@ This server is for work that needs the service role:
 - blocks
 - profile and password settings
 - creating and managing groups
+- deleting your own message and cleaning `chat-media` when a group is cleared or erased
 
 `middlewares/authMiddleware.ts` reads `Authorization: Bearer <token>` and checks it with `supabase.auth.getUser`. The route then uses `req.user.id`.
 
@@ -97,7 +98,7 @@ Routes are in `routes/friendsRouter.ts`. Every route uses `authMiddleware`.
 
 Friendships live in `friendships` with `pending` or `accepted`. The browser cannot delete accepted rows, so removal is done here.
 
-A block is a row in `blocks`. This API refuses a friend request when either person has blocked the other. The browser also refuses to send a direct message in that case. Message rows themselves are written to Supabase by the browser. Deleting one of your own messages goes through this API so the file in storage is removed too.
+A block is a row in `blocks`. This API refuses a friend request when either person has blocked the other. The browser also refuses to send a direct message in that case. Message rows themselves are written to Supabase by the browser. Deleting one of your own messages goes through this API so the file in storage is removed too. Deleting a group or clearing its history also removes the matching objects from `chat-media`. Leaving a chat only drops your membership; files stay for the other people.
 
 ## Groups
 
@@ -136,7 +137,7 @@ SQL for those columns is in `sql/`. Apply a file in the Supabase SQL editor when
 - `sql/add_conversation_mute.sql`
 - `sql/add_chat_media.sql`
 
-`add_chat_media.sql` creates the private `chat-media` bucket. The website uploads encrypted photos, SVGs, zip files, and other attachments there. This API never receives the file and cannot decrypt it. The message row only stores a `file:v1` description. `kind` is `image` or `file`. The browser writes the message itself.
+`add_chat_media.sql` creates the private `chat-media` bucket. The website uploads encrypted photos, SVGs, zip files, and other attachments there. This API never receives the file and cannot decrypt it. The message row only stores a `file:v1` description. `kind` is `image` or `file`. The browser writes the message itself. Storage cleanup runs when you delete your own message, clear a group’s history, or erase a group.
 
 ## User lookup
 
@@ -153,7 +154,10 @@ controllers              Request handling
 middlewares/authMiddleware.ts    Bearer token check
 functions/passwordPolicy.ts      Password rule for signup and password change
 functions/blocks.ts      Block checks
+functions/chatMedia.ts   Remove objects from the chat-media bucket
+functions/cryptoFunctions.ts     Key generation for registration
+functions/getUserInfo.ts Profile lookup helper
 sql                      Database changes to run by hand
 ```
 
-Messages, reactions, and read state are not in these routes. The browser writes those to Supabase.
+Sending, reactions, and read state stay in the browser against Supabase. This API deletes your own message (and its file), clears or erases a group’s files in `chat-media`, and manages friends, blocks, settings, and groups.

@@ -2,6 +2,10 @@ import { Response } from 'express';
 import { supabase } from '..';
 import { ConversationMemberT, PublicProfileT } from '../types';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
+import {
+  filePathFromMessage,
+  removeStoredPaths,
+} from '../functions/chatMedia';
 
 export const getConversationMembersController = async (
   req: AuthenticatedRequest,
@@ -51,18 +55,6 @@ export const getConversationMembersController = async (
   }
 };
 
-const filePathFromMessage = (content: string) => {
-  if (!content.startsWith('file:v1:')) return null;
-  try {
-    const payload = JSON.parse(content.slice('file:v1:'.length)) as {
-      path?: string;
-    };
-    return typeof payload.path === 'string' ? payload.path : null;
-  } catch {
-    return null;
-  }
-};
-
 export const deleteMyMessageController = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -104,7 +96,7 @@ export const deleteMyMessageController = async (
 
     const path = filePathFromMessage(message.content || '');
     if (path?.startsWith(`${conversationId}/`)) {
-      await supabase.storage.from('chat-media').remove([path]);
+      await removeStoredPaths([path]);
     }
 
     res.status(200).send({ message: 'Message deleted' });
