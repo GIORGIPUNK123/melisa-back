@@ -50,3 +50,66 @@ export const getConversationMembersController = async (
       .send({ error: err.message || 'Failed to get friends list' });
   }
 };
+
+const filePathFromMessage = (content: string) => {
+  if (!content.startsWith('file:v1:')) return null;
+  try {
+    const payload = JSON.parse(content.slice('file:v1:'.length)) as {
+      path?: string;
+    };
+    return typeof payload.path === 'string' ? payload.path : null;
+  } catch {
+    return null;
+  }
+};
+
+export const deleteMyMessageController = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  const userId = req.user?.id;
+  const { conversationId, messageId } = req.params;
+
+  if (!userId) {
+    return res.status(401).send({ error: 'Unauthorized' });
+  }
+  if (!conversationId || !messageId) {
+    return res.status(400).send({ error: 'Message not found' });
+  }
+
+  try {
+    const { data: message, error } = await supabase
+      .from('messages')
+      .select('id, sender_id, conversation_id, content')
+      .eq('id', messageId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!message || String(message.conversation_id) !== String(conversationId)) {
+      return res.status(404).send({ error: 'Message not found' });
+    }
+    if (message.sender_id !== userId) {
+      return res.status(403).send({ error: 'You can only delete your own messages' });
+    }
+
+    await supabase.from('message_reactions').delete().eq('message_id', messageId);
+
+    const { error: deleteError } = await supabase
+      .from('messages')
+      .delete()
+      .eq('id', messageId)
+      .eq('sender_id', userId);
+
+    if (deleteError) throw deleteError;
+
+    const path = filePathFromMessage(message.content || '');
+    if (path?.startsWith(`${conversationId}/`)) {
+      await supabase.storage.from('chat-media').remove([path]);
+    }
+
+    res.status(200).send({ message: 'Message deleted' });
+  } catch (err: any) {
+    console.error('Delete message error:', err);
+    res.status(500).send({ error: err.message || 'Failed to delete message' });
+  }
+};

@@ -97,7 +97,7 @@ Routes are in `routes/friendsRouter.ts`. Every route uses `authMiddleware`.
 
 Friendships live in `friendships` with `pending` or `accepted`. The browser cannot delete accepted rows, so removal is done here.
 
-A block is a row in `blocks`. This API refuses a friend request when either person has blocked the other. The browser also refuses to send a direct message in that case. Message rows themselves are written to Supabase by the browser, not by these routes.
+A block is a row in `blocks`. This API refuses a friend request when either person has blocked the other. The browser also refuses to send a direct message in that case. Message rows themselves are written to Supabase by the browser. Deleting one of your own messages goes through this API so the file in storage is removed too.
 
 ## Groups
 
@@ -115,6 +115,7 @@ Routes are in `routes/conversationsRouter.ts`. The handler is `controllers/group
 | DELETE | `/conversations/group/:id/messages` | Clear history |
 | DELETE | `/conversations/group/:id` | Delete the group |
 | GET | `/conversations/members/:conversationId` | Member profiles |
+| DELETE | `/conversations/:conversationId/messages/:messageId` | Delete your own message, and its stored file if it has one |
 
 Create group expects:
 
@@ -133,6 +134,9 @@ SQL for those columns is in `sql/`. Apply a file in the Supabase SQL editor when
 - `sql/add_group_settings.sql`
 - `sql/add_group_name_permission.sql`
 - `sql/add_conversation_mute.sql`
+- `sql/add_chat_media.sql`
+
+`add_chat_media.sql` creates the private `chat-media` bucket. The website uploads encrypted photos, SVGs, zip files, and other attachments there. This API never receives the file and cannot decrypt it. The message row only stores a `file:v1` description. `kind` is `image` or `file`. The browser writes the message itself.
 
 ## User lookup
 

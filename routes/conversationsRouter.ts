@@ -1,5 +1,8 @@
 import { Router } from 'express';
-import { getConversationMembersController } from '../controllers/conversationsController';
+import {
+  deleteMyMessageController,
+  getConversationMembersController,
+} from '../controllers/conversationsController';
 import {
   clearGroupMessagesController,
   createGroupController,
@@ -61,4 +64,10 @@ conversationsRouter.get(
   '/members/:conversationId',
   authMiddleware,
   getConversationMembersController,
+);
+
+conversationsRouter.delete(
+  '/:conversationId/messages/:messageId',
+  authMiddleware,
+  deleteMyMessageController,
 );
