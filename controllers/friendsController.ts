@@ -104,7 +104,7 @@ export const addFriendController = async (req: any, res: Response) => {
       type: 'friend_request',
       title: 'New Friend Request',
       message: `${sender?.nickname || sender?.username || 'Someone'} sent you a friend request`,
-      link: `/friends/requests`,
+      link: `/requests`,
       is_read: false,
     });
 
@@ -276,7 +276,8 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
 
       if (error) {
         if (error.code === '23505') {
-          const detail = `${error.message} ${error.details ?? ''}`.toLowerCase();
+          const detail =
+            `${error.message} ${error.details ?? ''}`.toLowerCase();
 
           if (detail.includes('username')) {
             return sendApiError(
@@ -384,12 +385,11 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
           { field: 'password' },
         );
       }
-      const { data: existingKeyMaterial, error: keyReadError } =
-        await supabase
-          .from('users')
-          .select('encrypted_private_key, iv, salt')
-          .eq('id', userId)
-          .single();
+      const { data: existingKeyMaterial, error: keyReadError } = await supabase
+        .from('users')
+        .select('encrypted_private_key, iv, salt')
+        .eq('id', userId)
+        .single();
 
       if (keyReadError) throw keyReadError;
       previousKeyMaterial = existingKeyMaterial;
@@ -915,7 +915,9 @@ export const getFriendsListController = async (req: any, res: Response) => {
 
       if (!memberIds.includes(userId) || memberIds.length !== 2) return;
 
-      const friendId = memberIds.find((memberId: string) => memberId !== userId);
+      const friendId = memberIds.find(
+        (memberId: string) => memberId !== userId,
+      );
       if (friendId) {
         conversationIdByFriendId.set(friendId, conversation.id);
       }
