@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { ObjectSchema } from 'yup';
+import { ObjectSchema, ValidationError } from 'yup';
+import { ApiErrorField, sendApiError } from '../functions/apiErrors';
 
 export const validation =
   (
@@ -18,7 +19,22 @@ export const validation =
         body: req.body,
       });
       next();
-    } catch (error: any) {
-      res.status(400).send({ error: error.message });
+    } catch (error: unknown) {
+      if (error instanceof ValidationError) {
+        const field = error.path?.split('.').pop() as
+          | ApiErrorField
+          | undefined;
+
+        return sendApiError(res, 400, 'VALIDATION_ERROR', error.message, {
+          field,
+        });
+      }
+
+      return sendApiError(
+        res,
+        400,
+        'VALIDATION_ERROR',
+        'Invalid request body',
+      );
     }
   };

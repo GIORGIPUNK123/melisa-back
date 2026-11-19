@@ -5,6 +5,7 @@ import { box_keyPair, encodeBase64 } from 'tweetnacl-ts';
 import { randomBytes } from 'crypto';
 import { argon2id, hash } from 'argon2';
 import { AESGCMEncrypt } from '../functions/cryptoFunctions';
+import { sendApiError } from '../functions/apiErrors';
 
 const frontendOrigin = (
   process.env.FRONTEND_URL || 'https://melisa-phi.vercel.app'
@@ -49,7 +50,9 @@ export const registerController = async (req: any, res: Response) => {
     const existingUser = await userExists(supabase, email);
 
     if (existingUser) {
-      return res.status(400).send({ error: 'User already exists' });
+      return sendApiError(res, 409, 'EMAIL_TAKEN', 'User already exists', {
+        field: 'email',
+      });
     }
     // Create auth user
     const { data: userData, error: authError } = await supabase.auth.signUp({
@@ -64,7 +67,12 @@ export const registerController = async (req: any, res: Response) => {
     }
 
     if (!userData.user) {
-      return res.status(400).send({ error: 'Failed to create user' });
+      return sendApiError(
+        res,
+        400,
+        'REGISTRATION_FAILED',
+        'Failed to create user',
+      );
     }
 
     const keyPair = box_keyPair();
@@ -103,26 +111,72 @@ export const registerController = async (req: any, res: Response) => {
 
     if (insertError) {
       console.error('User table error:', insertError);
-      return res.status(400).send({ error: insertError.message });
+
+      if (insertError.code === '23505') {
+        const detail =
+          `${insertError.message} ${insertError.details ?? ''}`.toLowerCase();
+
+        if (detail.includes('username')) {
+          return sendApiError(
+            res,
+            409,
+            'USERNAME_TAKEN',
+            'Username already taken',
+            { field: 'username' },
+          );
+        }
+
+        if (detail.includes('email')) {
+          return sendApiError(
+            res,
+            409,
+            'EMAIL_TAKEN',
+            'Email is already in use',
+            { field: 'email' },
+          );
+        }
+      }
+
+      return sendApiError(
+        res,
+        400,
+        'REGISTRATION_FAILED',
+        insertError.message,
+      );
     }
 
     res.status(200).send({ message: 'Please confirm your email' });
   } catch (err: any) {
     console.error('Registration error:', err);
-    res.status(400).send({ error: err.message || 'Registration failed' });
+    sendApiError(
+      res,
+      400,
+      'REGISTRATION_FAILED',
+      err.message || 'Registration failed',
+    );
   }
 };
 export const checkUsernameController = async (req: any, res: Response) => {
-  const { username } = req.query;
-  try {
-    const userNameExistsBool = await userNameExists(
-      supabase,
-      username as string,
+  const username =
+    typeof req.query.username === 'string' ? req.query.username.trim() : '';
+
+  if (!username) {
+    return sendApiError(
+      res,
+      400,
+      'VALIDATION_ERROR',
+      'Username is required',
+      { field: 'username' },
     );
+  }
+
+  try {
+    const userNameExistsBool = await userNameExists(supabase, username);
 
     res.status(200).send({ exists: userNameExistsBool });
   } catch (err: any) {
-    res.status(400).send({ error: err.message });
+    console.error('Check username error:', err);
+    sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to check username');
   }
 };
 

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { supabase } from '..';
+import { sendApiError } from '../functions/apiErrors';
 
 // After authMiddleware runs, user is guaranteed to be set
 export interface AuthenticatedRequest extends Request {
@@ -14,20 +15,20 @@ export const authMiddleware = async (
   const token = req.headers.authorization?.replace('Bearer ', '');
 
   if (!token) {
-    return res.status(401).send({ error: 'No token provided' });
+    return sendApiError(res, 401, 'UNAUTHORIZED', 'No token provided');
   }
 
   try {
     const { data, error } = await supabase.auth.getUser(token);
 
     if (error || !data.user) {
-      return res.status(401).send({ error: 'Invalid token' });
+      return sendApiError(res, 401, 'UNAUTHORIZED', 'Invalid token');
     }
 
     // Attach user to request
     (req as AuthenticatedRequest).user = data.user;
     next();
   } catch (err) {
-    return res.status(401).send({ error: 'Authentication failed' });
+    return sendApiError(res, 401, 'UNAUTHORIZED', 'Authentication failed');
   }
 };

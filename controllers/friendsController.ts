@@ -7,6 +7,12 @@ import {
   usersAreBlocked,
 } from '../functions/blocks';
 import { passwordError } from '../functions/passwordPolicy';
+import { sendApiError } from '../functions/apiErrors';
+
+// Temporarily disabled: email changes only update Supabase Auth and are not
+// synchronized with public.users.email. Re-enable after both are updated
+// atomically.
+const EMAIL_UPDATES_ENABLED = false;
 
 export const addFriendController = async (req: any, res: Response) => {
   const { username } = req.body;
@@ -120,30 +126,69 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
   const userId = req.user?.id;
 
   if (!userId) {
-    return res.status(401).send({ error: 'Unauthorized' });
+    return sendApiError(res, 401, 'UNAUTHORIZED', 'Unauthorized');
+  }
+
+  if (email !== undefined && !EMAIL_UPDATES_ENABLED) {
+    return sendApiError(
+      res,
+      400,
+      'EMAIL_UPDATE_DISABLED',
+      'Email updates are temporarily disabled',
+      { field: 'email' },
+    );
   }
 
   try {
-    const updates: any = {};
+    const updates: Record<string, unknown> = {};
+    let previousKeyMaterial: {
+      encrypted_private_key: string | null;
+      iv: string | null;
+      salt: string | null;
+    } | null = null;
 
     // Validate and prepare user table updates
     if (username !== undefined) {
-      if (username.length < 3 || username.length > 50) {
-        return res
-          .status(400)
-          .send({ error: 'Username must be between 3 and 50 characters' });
+      if (typeof username !== 'string') {
+        return sendApiError(
+          res,
+          400,
+          'VALIDATION_ERROR',
+          'Username must be a string',
+          { field: 'username' },
+        );
+      }
+
+      const nextUsername = username.trim();
+
+      if (nextUsername.length < 3 || nextUsername.length > 50) {
+        return sendApiError(
+          res,
+          400,
+          'VALIDATION_ERROR',
+          'Username must be between 3 and 50 characters',
+          { field: 'username' },
+        );
       }
 
       // Check if username is taken
-      const { data: existingUser } = await supabase
+      const { data: existingUser, error: existingUserError } = await supabase
         .from('users')
         .select('id')
-        .eq('username', username)
+        .eq('username', nextUsername)
         .neq('id', userId)
         .maybeSingle();
 
+      if (existingUserError) throw existingUserError;
+
       if (existingUser) {
-        return res.status(400).send({ error: 'Username already taken' });
+        return sendApiError(
+          res,
+          409,
+          'USERNAME_TAKEN',
+          'Username already taken',
+          { field: 'username' },
+        );
       }
 
       // Check if user has updated username in the last 7 days
@@ -155,7 +200,7 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
 
       if (
         currentUser &&
-        currentUser.username !== username &&
+        currentUser.username !== nextUsername &&
         currentUser.updated_at
       ) {
         const lastUpdate = new Date(currentUser.updated_at);
@@ -165,25 +210,54 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
 
         if (daysSinceUpdate < 7) {
           const daysRemaining = Math.ceil(7 - daysSinceUpdate);
-          return res.status(400).send({
-            error: `You can only change your username once every 7 days. Please wait ${daysRemaining} more day(s)`,
-          });
+          return sendApiError(
+            res,
+            400,
+            'USERNAME_COOLDOWN',
+            `You can only change your username once every 7 days. Please wait ${daysRemaining} more day(s)`,
+            { field: 'username' },
+          );
         }
       }
 
-      updates.username = username;
+      updates.username = nextUsername;
     }
 
     if (nickname !== undefined) {
-      if (nickname.length < 2 || nickname.length > 100) {
-        return res
-          .status(400)
-          .send({ error: 'Nickname must be between 2 and 100 characters' });
+      if (typeof nickname !== 'string') {
+        return sendApiError(
+          res,
+          400,
+          'VALIDATION_ERROR',
+          'Nickname must be a string',
+          { field: 'nickname' },
+        );
       }
-      updates.nickname = nickname;
+
+      const nextNickname = nickname.trim();
+
+      if (nextNickname.length < 2 || nextNickname.length > 100) {
+        return sendApiError(
+          res,
+          400,
+          'VALIDATION_ERROR',
+          'Nickname must be between 2 and 100 characters',
+          { field: 'nickname' },
+        );
+      }
+      updates.nickname = nextNickname;
     }
 
     if (avatarUrl !== undefined) {
+      if (avatarUrl !== null && typeof avatarUrl !== 'string') {
+        return sendApiError(
+          res,
+          400,
+          'VALIDATION_ERROR',
+          'Avatar URL must be a string',
+          { field: 'avatarUrl' },
+        );
+      }
       updates.avatar_url = avatarUrl || null;
     }
 
@@ -193,7 +267,7 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
 
     // Update users table
     if (Object.keys(updates).length > 0) {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('users')
         .update(updates)
         .eq('id', userId)
@@ -201,18 +275,63 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
         .single();
 
       if (error) {
+        if (error.code === '23505') {
+          const detail = `${error.message} ${error.details ?? ''}`.toLowerCase();
+
+          if (detail.includes('username')) {
+            return sendApiError(
+              res,
+              409,
+              'USERNAME_TAKEN',
+              'Username already taken',
+              { field: 'username' },
+            );
+          }
+
+          if (detail.includes('email')) {
+            return sendApiError(
+              res,
+              409,
+              'EMAIL_TAKEN',
+              'Email is already in use',
+              { field: 'email' },
+            );
+          }
+        }
+
         throw error;
       }
     }
 
     // Update auth email
-    if (email) {
+    if (EMAIL_UPDATES_ENABLED && email) {
+      if (typeof email !== 'string' || !email.trim()) {
+        return sendApiError(
+          res,
+          400,
+          'VALIDATION_ERROR',
+          'Email must be a valid email address',
+          { field: 'email' },
+        );
+      }
+
       const { error: emailError } = await supabase.auth.admin.updateUserById(
         userId,
-        { email },
+        { email: email.trim() },
       );
+
       if (emailError) {
-        throw emailError;
+        const emailTaken = /already|exists|registered|duplicate/i.test(
+          emailError.message,
+        );
+
+        return sendApiError(
+          res,
+          emailTaken ? 409 : 400,
+          emailTaken ? 'EMAIL_TAKEN' : 'EMAIL_UPDATE_FAILED',
+          emailTaken ? 'Email is already in use' : emailError.message,
+          { field: 'email' },
+        );
       }
     }
 
@@ -228,24 +347,53 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
 
     // Password change must include re-wrapped key material, validated first
     if (password) {
+      if (typeof password !== 'string') {
+        return sendApiError(
+          res,
+          400,
+          'VALIDATION_ERROR',
+          'Password must be a string',
+          { field: 'password' },
+        );
+      }
+
       const passwordProblem = passwordError(password);
       if (passwordProblem) {
-        return res.status(400).send({ error: passwordProblem });
+        return sendApiError(res, 400, 'WEAK_PASSWORD', passwordProblem, {
+          field: 'password',
+        });
       }
       if (!encrypted_private_key || !iv || !salt) {
-        return res.status(400).send({
-          error:
-            'Changing password requires re-encrypted private key material (encrypted_private_key, iv, salt)',
-        });
+        return sendApiError(
+          res,
+          400,
+          'MISSING_KEY_MATERIAL',
+          'Changing password requires re-encrypted private key material (encrypted_private_key, iv, salt)',
+          { field: 'password' },
+        );
       }
     }
 
     if (encrypted_private_key || iv || salt) {
       if (!encrypted_private_key || !iv || !salt) {
-        return res.status(400).send({
-          error: 'encrypted_private_key, iv, and salt must be sent together',
-        });
+        return sendApiError(
+          res,
+          400,
+          'INCOMPLETE_KEY_MATERIAL',
+          'encrypted_private_key, iv, and salt must be sent together',
+          { field: 'password' },
+        );
       }
+      const { data: existingKeyMaterial, error: keyReadError } =
+        await supabase
+          .from('users')
+          .select('encrypted_private_key, iv, salt')
+          .eq('id', userId)
+          .single();
+
+      if (keyReadError) throw keyReadError;
+      previousKeyMaterial = existingKeyMaterial;
+
       const { error: keyError } = await supabase
         .from('users')
         .update({ encrypted_private_key, iv, salt })
@@ -256,12 +404,55 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
     }
 
     if (password) {
-      const { error: passwordError } = await supabase.auth.admin.updateUserById(
-        userId,
-        { password },
-      );
-      if (passwordError) {
-        throw passwordError;
+      let passwordUpdateError: { message: string } | null = null;
+
+      try {
+        const { error } = await supabase.auth.admin.updateUserById(userId, {
+          password,
+        });
+        passwordUpdateError = error;
+      } catch (error) {
+        passwordUpdateError = {
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Failed to update password',
+        };
+      }
+
+      if (passwordUpdateError) {
+        // Supabase rejected the new login password after the re-wrapped key
+        // material was already stored. Restore the old material so the
+        // account cannot end up with a key encrypted by a password that was
+        // never accepted.
+        if (previousKeyMaterial) {
+          const { error: rollbackError } = await supabase
+            .from('users')
+            .update(previousKeyMaterial)
+            .eq('id', userId);
+
+          if (rollbackError) {
+            console.error(
+              'Failed to restore key material after password update failure:',
+              rollbackError,
+            );
+            return sendApiError(
+              res,
+              500,
+              'INTERNAL_ERROR',
+              'Failed to update password safely. Please try again or contact support.',
+              { field: 'password' },
+            );
+          }
+        }
+
+        return sendApiError(
+          res,
+          400,
+          'PASSWORD_UPDATE_FAILED',
+          passwordUpdateError.message,
+          { field: 'password' },
+        );
       }
     }
 
@@ -280,7 +471,7 @@ export const updateUserSettingsController = async (req: any, res: Response) => {
     });
   } catch (err: any) {
     console.error('Update settings error:', err);
-    res.status(500).send({ error: err.message || 'Failed to update settings' });
+    sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to update settings');
   }
 };
 
