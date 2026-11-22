@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import {
   addFriendController,
-  updateUserSettingsController,
   getPendingRequestsController,
   cancelFriendRequestController,
   acceptFriendRequestController,
@@ -18,6 +17,9 @@ import {
   unblockUserController,
 } from '../controllers/blocksController';
 import { authMiddleware } from '../middlewares/authMiddleware';
+// Legacy alias for clients that still call the old URL. Remove once no
+// deployed frontend uses it. The canonical route is PUT /settings.
+import { updateUserSettingsController } from '../controllers/settingsController';
 
 export const friendsRouter = Router();
 
@@ -79,4 +81,5 @@ friendsRouter.get(
   getUserProfileController,
 );
 
+// Deprecated: kept only for backwards compatibility. New clients use PUT /settings.
 friendsRouter.put('/settings', authMiddleware, updateUserSettingsController);

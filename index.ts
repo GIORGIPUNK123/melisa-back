@@ -5,6 +5,7 @@ import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import { authRouter } from './routes/authRouter';
 import { friendsRouter } from './routes/friendsRouter';
+import { settingsRouter } from './routes/settingsRouter';
 import { userInfoRoute } from './routes/userInfoRoute';
 import { conversationsRouter } from './routes/conversationsRouter';
 
@@ -30,6 +31,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/auth', authRouter);
 app.use('/friends', friendsRouter);
+app.use('/settings', settingsRouter);
 app.use('/userinfo', userInfoRoute);
 app.use('/users', userInfoRoute);
 app.use('/conversations', conversationsRouter);

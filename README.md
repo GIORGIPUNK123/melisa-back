@@ -73,7 +73,17 @@ Registration in `controllers/authController.ts`:
 
 The browser does not send keys. This server creates them. After email confirmation, the user signs in and the website decrypts the stored private key with the same password.
 
-Password changes do not happen on `/auth`. They go through `PUT /friends/settings` and must include the new password plus a new `encrypted_private_key`, `iv`, and `salt`. The key is saved before the auth password changes, so a failed password update does not leave the key wrapped with a password that was never set.
+Password changes do not happen on `/auth`. They go through `PUT /settings` and must include the new password plus a new `encrypted_private_key`, `iv`, and `salt`. The key is saved before the auth password changes, so a failed password update does not leave the key wrapped with a password that was never set.
+
+## Settings
+
+Routes are in `routes/settingsRouter.ts`. Every route uses `authMiddleware`.
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| PUT | `/settings` | Nickname, avatar, email, appear offline, password plus re-wrapped key |
+
+`PUT /friends/settings` is kept as a deprecated alias for older clients.
 
 ## Friends and blocks
 
@@ -92,7 +102,6 @@ Routes are in `routes/friendsRouter.ts`. Every route uses `authMiddleware`.
 | GET | `/friends/conversation/:friendUserId` | Get or create the direct chat |
 | GET | `/friends/conversation/:conversationId/members` | Members of a conversation |
 | GET | `/friends/profile/:username` | Public profile |
-| PUT | `/friends/settings` | Nickname, avatar, email, appear offline, password plus re-wrapped key |
 | POST | `/friends/block` | Block a user |
 | DELETE | `/friends/block/:userId` | Unblock |
 
